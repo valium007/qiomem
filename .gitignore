@@ -1,0 +1,5 @@
+*.obj
+*.exe
+*.md
+*.png
+.obsidian/
