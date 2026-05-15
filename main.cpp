@@ -1,12 +1,12 @@
-#include <Windows.h>
-#include <SetupAPI.h>
+#include "superfetch/superfetch.h"
 #include <Psapi.h>
+#include <SetupAPI.h>
+#include <Windows.h>
 #include <cstdint>
 #include <memoryapi.h>
 #include <print>
 #include <vector>
 #include <winnt.h>
-#include "superfetch/superfetch.h"
 
 #pragma comment(lib, "ntdll.lib")
 #pragma comment(lib, "setupapi.lib")
@@ -16,18 +16,17 @@ static const GUID GUID_QIOMEM_INTERFACE = {
     { 0xA6, 0x40, 0x33, 0x48, 0x0A, 0x03, 0x3C, 0x25 }
 };
 
-#define IOCTL_PHYS_READ_DWORD  0x8012008
+#define IOCTL_PHYS_READ_DWORD 0x8012008
 #define IOCTL_PHYS_WRITE_DWORD 0x8012014
 
 #pragma pack(push, 1)
-struct PhysIoBuffer {      // Total: 11 bytes
-    uint32_t Address;      // [0..3]  Physical address (32-bit)
-    char padding[3];       // [4..6]  Padding
-    uint32_t Data32;       // [7..10] Dword-granularity value (buf+7)
+struct PhysIoBuffer { // Total: 11 bytes
+    uint32_t Address; // [0..3]  Physical address (32-bit)
+    char padding[3]; // [4..6]  Padding
+    uint32_t Data32; // [7..10] Dword-granularity value (buf+7)
 };
 static_assert(sizeof(PhysIoBuffer) == 11);
 #pragma pack(pop)
-
 
 static HANDLE OpenDevice()
 {
@@ -56,7 +55,10 @@ static HANDLE OpenDevice()
         nullptr, 0, &requiredSize, nullptr);
 
     auto* detail = (SP_DEVICE_INTERFACE_DETAIL_DATA_W*)malloc(requiredSize);
-    if (!detail) { SetupDiDestroyDeviceInfoList(hDevInfo); return INVALID_HANDLE_VALUE; }
+    if (!detail) {
+        SetupDiDestroyDeviceInfoList(hDevInfo);
+        return INVALID_HANDLE_VALUE;
+    }
     detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
 
     SetupDiGetDeviceInterfaceDetailW(hDevInfo, &ifaceData,
@@ -74,17 +76,15 @@ static HANDLE OpenDevice()
     return h;
 }
 
-
-
 static bool read_phys_dword(HANDLE hDev, uint64_t phys_addr, uint32_t& out)
 {
-    PhysIoBuffer buf{};
+    PhysIoBuffer buf {};
     buf.Address = static_cast<uint32_t>(phys_addr);
     DWORD bytes_ret = 0;
     if (!DeviceIoControl(hDev, IOCTL_PHYS_READ_DWORD,
-                         &buf, sizeof(buf),
-                         &buf, sizeof(buf),
-                         &bytes_ret, nullptr))
+            &buf, sizeof(buf),
+            &buf, sizeof(buf),
+            &bytes_ret, nullptr))
         return false;
     out = buf.Data32;
     return true;
@@ -93,30 +93,35 @@ static bool read_phys_dword(HANDLE hDev, uint64_t phys_addr, uint32_t& out)
 static bool read_phys_qword(HANDLE hDev, uint64_t phys_addr, uint64_t& out)
 {
     uint32_t lo = 0, hi = 0;
-    if (!read_phys_dword(hDev, phys_addr,     lo)) return false;
-    if (!read_phys_dword(hDev, phys_addr + 4, hi)) return false;
+    if (!read_phys_dword(hDev, phys_addr, lo))
+        return false;
+    if (!read_phys_dword(hDev, phys_addr + 4, hi))
+        return false;
     out = (static_cast<uint64_t>(hi) << 32) | lo;
     return true;
 }
 
 static bool write_phys_dword(HANDLE hDev, uint64_t phys_addr, uint32_t val)
 {
-    PhysIoBuffer buf{};
+    PhysIoBuffer buf {};
     buf.Address = static_cast<uint32_t>(phys_addr);
-    buf.Data32  = val;
+    buf.Data32 = val;
     DWORD bytes_ret = 0;
     return DeviceIoControl(hDev, IOCTL_PHYS_WRITE_DWORD,
-                           &buf, sizeof(buf),
-                           &buf, sizeof(buf),
-                           &bytes_ret, nullptr) != 0;
+               &buf, sizeof(buf),
+               &buf, sizeof(buf),
+               &bytes_ret, nullptr)
+        != 0;
 }
 
 static bool write_phys_qword(HANDLE hDev, uint64_t phys_addr, uint64_t val)
 {
     uint32_t lo = static_cast<uint32_t>(val);
     uint32_t hi = static_cast<uint32_t>(val >> 32);
-    if (!write_phys_dword(hDev, phys_addr,     lo)) return false;
-    if (!write_phys_dword(hDev, phys_addr + 4, hi)) return false;
+    if (!write_phys_dword(hDev, phys_addr, lo))
+        return false;
+    if (!write_phys_dword(hDev, phys_addr + 4, hi))
+        return false;
     return true;
 }
 
@@ -171,7 +176,7 @@ int main()
 
         if (pa < 0x1'0000'0000ULL) {
             std::println("[+] attempt {}: VA {:#X} -> PA {:#X} (below 4GB)", attempt, reinterpret_cast<uintptr_t>(buf), pa);
-            break;  // success
+            break; // success
         }
 
         std::println("[!] attempt {}: PA {:#X} above 4GB, retrying...", attempt, pa);
@@ -194,7 +199,7 @@ int main()
     std::println("[+] VA {:#X} -> PA {:#X}", reinterpret_cast<uintptr_t>(buf), pa);
 
     *reinterpret_cast<uint64_t*>(buf) = 0xAAAAAAAAAAAA;
-    
+
     // Read back via physical memory to verify
     uint64_t readback = 0;
     if (read_phys_qword(hDev, pa, readback)) {
